@@ -1,0 +1,21 @@
+```{r, message=FALSE, include=TRUE, echo=FALSE,fig.width=8,fig.height=3}
+# Plot for Different skin vs avg_flag
+fig1 = customer_full %>% ggplot(aes(x=avg_flag, fill=skin))+geom_histogram() + xlab("Device Default per Minute") +
+  labs(captions = "Figure 4. Histogram of Device Default per Minute by Skin") + 
+  theme_minimal()
+
+fig2 = customer %>% ggplot(aes(x = age)) +
+  geom_histogram(aes(y = ..density..),boundary = 0, binwidth = 5, fill = "grey", color = "black") +
+  geom_density(col = "#0000FF") + # add density curve
+  facet_wrap(~customer_type)+ #create multi-panel plot with one panel per customer type
+  labs(captions = "Figure 1.Histogram of the Distribution of Age of \n New Customers V.S. Traditional Customers")+
+  theme_minimal()
+  
+fig3 = customer %>% ggplot(aes(x = hhld_median_inc)) +
+  geom_boxplot() +
+  facet_wrap(~customer_type, ncol = 1) + #create multi-panel plot with one panel per customer type
+  labs(captions = "Figure 3. Boxplot Displaying Household Median Incomes \n of New Customers V.S. Traditional Customers")+
+  theme_minimal()
+
+grid.arrange(fig2, fig3, fig1, ncol = 2)
+```

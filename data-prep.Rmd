@@ -1,0 +1,161 @@
+---
+title: "Data preparation"
+output:
+  pdf_document: default
+---
+
+# Instructions
+
+- You only need to submit the .Rmd of this file, not a PDF.
+
+- You should __comment__ your code clearly to show what you've done to prepare the data.
+
+- The purpose of this file is to use the data in the `data-raw` folder to create the data you will use in the report. The data you will use in the report should be saved in the `data` folder. It is good professional practice to make sure you're never directly modifying your raw data, but instead creating new datasets based on merges/manipulations that you need to reuse.
+
+- Make sure you've taken a look at the hints for the web scraping and census API. 
+
+- You may find the `write_rds()` function from the `readr` package helpful (it is loaded as part of the `tidyverse`). 
+
+- You do not need to keep the structure below.
+
+# Set up
+
+```{r, libraries}
+# Set up any libraries you need
+library(tidyverse)
+library(polite)
+library(rvest)
+library(cancensus)
+library(haven)
+```
+
+# Loading client data
+
+```{r}
+cust_dev = read_rds("~/Desktop/STA303/final project/rstudio-export (2)/data-raw/cust_dev.Rds")
+cust_sleep = read_rds("~/Desktop/STA303/final project/rstudio-export (2)/data-raw/cust_sleep.Rds")
+customer_raw = read_rds("~/Desktop/STA303/final project/rstudio-export (2)/data-raw/customer.Rds")
+device = read_rds("~/Desktop/STA303/final project/rstudio-export (2)/data-raw/device.Rds")
+```
+
+
+# Getting external data
+
+## Web scraping industry data
+
+```{r}
+url <- "https://fitnesstrackerinfohub.netlify.app/"
+
+# Make sure this code is updated appropriately to provide 
+# informative user_agent details
+target <- bow(url,
+              user_agent = "charlene.shu@mail.utoronto.ca for STA303/1002 project",
+              force = TRUE)
+
+# Any details provided in the robots text on crawl delays and 
+# which agents are allowed to scrape
+target
+
+html <- scrape(target)
+
+device_data <- html %>% 
+  html_elements("table") %>% 
+  html_table() %>% 
+  pluck(1) # added, in case you're getting a list format
+```
+## Web scraping emoji data
+
+```{r}
+url <- "https://unicode.org/emoji/charts/full-emoji-modifiers.html"
+
+# Make sure this code is updated appropriately to provide 
+# informative user_agent details
+target <- bow(url,
+              user_agent = "charlene.shu@mail.utoronto.ca for STA303/1002 project",
+              force = TRUE)
+
+# Any details provided in the robots text on crawl delays and 
+# which agents are allowed to scrape
+target
+
+html <- scrape(target)
+
+emoji_data <- html %>% 
+  html_elements("table") %>% 
+  html_table() %>% 
+  pluck(1) # added, in case you're getting a list format
+```
+
+# Census API
+
+```{r}
+options(cancensus.api_key = "CensusMapper_ef1c24e9e72cb58f8d159e2794be0e0f",
+        cancensus.cache_path = "cache") # this sets a folder for your cache
+
+
+# get all regions as at the 2016 Census (2020 not up yet)
+regions <- list_census_regions(dataset = "CA16")
+
+regions_filtered <-  regions %>% 
+  filter(level == "CSD") %>% # Figure out what CSD means in Census data
+  as_census_region_list()
+
+# This can take a while
+# We want to get household median income
+census_data_csd <- get_census(dataset='CA16', regions = regions_filtered,
+                          vectors=c("v_CA16_2397"), 
+                          level='CSD', geo_format = "sf")
+
+# Simplify to only needed variables
+median_income <- census_data_csd %>% 
+  as_tibble() %>% 
+  select(CSDuid = GeoUID, contains("median"), Population) %>% 
+  mutate(CSDuid = parse_number(CSDuid)) %>% 
+  rename(hhld_median_inc = 2)
+```
+
+# Postal code conversion
+```{r}
+dataset = read_sav("data-raw/pccfNat_fccpNat_082021sav.sav")
+
+postcode_raw <- dataset %>% 
+  select(PC, CSDuid)
+```
+
+# Data cleaning
+```{r}
+customer = customer_raw %>% #link customer and device
+  left_join(cust_dev, by = "cust_id") %>% 
+  left_join(device, by = "dev_id")
+
+postcode = postcode_raw %>%
+    distinct(PC, .keep_all =TRUE) %>% #clean up duplicate values
+    left_join(median_income, by = "CSDuid") #add data median_income to postcode 
+
+customer = customer %>%
+  left_join(postcode, by = c("postcode" = "PC")) %>% #combine with postcode
+  mutate(age = 2022 - as.numeric(substr(dob, 1, 4))) %>% #calculate age by dob
+  mutate(released_year = substr(released, 1, 4)) %>%
+  filter(!is.na(sex)) %>% #remove missing value in sex
+  mutate(skin = case_when(emoji_modifier == "U+1F3FB" ~ "Light",
+                          emoji_modifier == "U+1F3FC" ~ "Median_light",
+                          emoji_modifier == "U+1F3FD" ~ "Median",
+                          emoji_modifier == "U+1F3FE" ~ "Median_dark",
+                          emoji_modifier == "U+1F3FF" ~ "Dark",
+                          is.na(emoji_modifier) ~ "Default")) %>% #apply emoji_modifier to create skin
+  select(-postcode, -pronouns, -dev_id, -dob, -emoji_modifier, -CSDuid) #remove unnecessary variables
+
+write_rds(customer, "data/customer.Rds") #add customer data to file data
+```
+
+```{r}
+# Match customers with their sleeping time
+customer_full <- customer %>%
+  right_join(cust_sleep, by="cust_id") %>%
+  na.omit() %>% #delete the NA values 
+  filter(!grepl("Default", skin)) %>% #delete the rows with "Default" in skin
+  mutate(avg_flag = flags/duration)
+
+write_rds(customer_full, "data/customer_full.Rds") #add customer sleep data to file data
+```
+
